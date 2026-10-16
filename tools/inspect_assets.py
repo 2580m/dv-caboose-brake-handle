@@ -88,16 +88,20 @@ for obj in env.objects:
                             print(' SCRIPT', c.m_Script.read().m_Name)
                         except Exception:
                             pass
-if '--tree' in sys.argv:
+if '--tree' in sys.argv or '--shop-labels' in sys.argv:
     def walk(go, indent=''):
         print(indent + go.m_Name)
         for entry in go.m_Component:
             reader = entry.component.deref()
+            if '--shop-labels' in sys.argv and reader.type.name == 'MeshFilter':
+                mesh = reader.read().m_Mesh
+                print(indent, 'MESH', mesh.m_FileID, mesh.m_PathID, mesh.read().m_Name)
             if reader.type.name == 'Transform':
                 tr = reader.read()
                 print(indent, tr.m_LocalPosition, tr.m_LocalRotation)
                 for child in tr.m_Children:
                     walk(child.read().m_GameObject.read(), indent + '  ')
     for obj in env.objects:
-        if obj.type.name == 'GameObject' and obj.read().m_Name in ('CarCabooseRed_interior', 'KeyCaboose'):
+        if obj.type.name == 'GameObject' and obj.read().m_Name in (
+            ('Hammer_ShelfItem',) if '--shop-labels' in sys.argv else ('CarCabooseRed_interior', 'KeyCaboose')):
             walk(obj.read())

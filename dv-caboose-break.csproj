@@ -16,5 +16,7 @@
     <Reference Include="$(Managed)\*.dll" Exclude="$(Managed)\System*.dll;$(Managed)\mscorlib.dll;$(Managed)\netstandard.dll;$(Managed)\Microsoft.CSharp.dll;$(Managed)\Mono*.dll;$(Managed)\I18N*.dll"><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(Managed)\UnityModManager\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityModManager"><HintPath>$(Managed)\UnityModManager\UnityModManager.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DVLangHelper.Data"><HintPath>$(GameDir)\Mods\DVLangHelper\DVLangHelper.Data.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="DVLangHelper.Runtime"><HintPath>$(GameDir)\Mods\DVLangHelper\DVLangHelper.Runtime.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
 </Project>

@@ -86,15 +86,15 @@ namespace DVCabooseBreak
             if (drill != null)
             {
                 valid = aimed.HasHandle && !aimed.IsSecured;
-                GadgetInteractor.ShowInteractionTextLMB(aimed.IsSecured ? "制动拉杆已固定" :
-                    valid ? "长按固定制动拉杆" : "先手持拉杆，左键预挂到阀轴上", false);
+                GadgetInteractor.ShowInteractionTextLMB(L10n.Get(aimed.IsSecured ? "tool.already_secured" :
+                    valid ? "tool.secure" : "tool.place_first"), false);
             }
             else
             {
                 valid = aimed.IsSecured && aimed.Position <= 0.01f;
-                GadgetInteractor.ShowInteractionTextLMB(!aimed.HasHandle ? "没有可拆卸的制动拉杆" :
-                    !aimed.IsSecured ? "已解除固定，空手左键取下" :
-                    valid ? "长按解除拉杆固定" : "请先完全缓解守车小闸", false);
+                GadgetInteractor.ShowInteractionTextLMB(L10n.Get(!aimed.HasHandle ? "tool.no_handle" :
+                    !aimed.IsSecured ? "tool.pick_up" :
+                    valid ? "tool.unfasten" : "tool.release_first"), false);
             }
             if (valid && tool.IsPressed && !requireRelease)
             {

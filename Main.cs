@@ -33,19 +33,30 @@ namespace DVCabooseBreak
         public static bool Load(UnityModManager.ModEntry entry)
         {
             Entry = entry;
+            L10n.Initialize(entry.Path);
             Settings = UnityModManager.ModSettings.Load<BrakeSettings>(entry) ?? new BrakeSettings();
+            Settings.MouseWheelSensitivity = BrakeSettings.ClampSensitivity(Settings.MouseWheelSensitivity);
             new Harmony(entry.Info.Id).PatchAll();
             entry.OnSaveGUI = e => Settings.Save(e);
             entry.OnGUI = _ => {
-                GUILayout.Label("守车制动拉杆 / Caboose brake handle — $500");
-                bool invert = GUILayout.Toggle(Settings.InvertMouseWheel, "反转守车制动鼠标滚轮（仅守车小闸）");
+                GUILayout.Label(L10n.Get("settings.title", Price.ToString("0")));
+                bool invert = GUILayout.Toggle(Settings.InvertMouseWheel, L10n.Get("settings.invert_wheel"));
                 if (invert != Settings.InvertMouseWheel)
                 {
                     Settings.InvertMouseWheel = invert;
                     Settings.Save(entry);
                 }
-                GUILayout.Label("手持拉杆左键预挂；电钻长按固定后才能制动。\n完全缓解后用锤子长按解除固定，再空手左键取下。");
-                GUILayout.Label("需要重启游戏才能卸载。多人游戏尚未验证。");
+                GUILayout.Label(L10n.Get("settings.sensitivity", Settings.MouseWheelSensitivity.ToString("0.0")));
+                float sensitivity = Mathf.Round(GUILayout.HorizontalSlider(Settings.MouseWheelSensitivity, 0.1f, 5f) * 10f) / 10f;
+                if (GUILayout.Button(L10n.Get("settings.reset_sensitivity"))) sensitivity = 1f;
+                if (sensitivity != Settings.MouseWheelSensitivity)
+                {
+                    Settings.MouseWheelSensitivity = sensitivity;
+                    Settings.Save(entry);
+                }
+                GUILayout.Label(L10n.Get("settings.sensitivity_help"));
+                GUILayout.Label(L10n.Get("settings.instructions"));
+                GUILayout.Label(L10n.Get("settings.restart_notice"));
             };
             entry.Logger.Log("Loaded. Native shop item + caboose independent air brake.");
             return true;

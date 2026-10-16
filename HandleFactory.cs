@@ -55,7 +55,8 @@ namespace DVCabooseBreak
             anchor.transform.localPosition = new Vector3(0, 0.13f, 0.016f);
             var spec = root.AddComponent<InventoryItemSpec>();
             AccessTools.Field(typeof(InventoryItemSpec), "itemPrefabName").SetValue(spec, Main.PrefabId);
-            spec.NameOverride = "守车制动拉杆 / Caboose brake handle";
+            spec.localizationKeyName = L10n.Key("item.name");
+            spec.localizationKeyDescription = L10n.Key("item.description");
             spec.IsEssential = false;
             spec.PreviewPrefab = model;
             spec.PreviewBounds = new Bounds(new Vector3(0, 0.0655f, 0.0145f), new Vector3(0.059f, 0.237f, 0.033f));
@@ -131,9 +132,8 @@ namespace DVCabooseBreak
 
     public sealed class HandleDescription : MonoBehaviour, IInventoryItemLocalizer
     {
-        private void Awake() => GetComponent<InventoryItemSpec>().NameOverride = "守车制动拉杆 / Caboose brake handle";
         public string GetNameParam() => "";
-        public string GetCustomDescription() => "手持拉杆对准空阀轴左键预挂，预挂时不可制动；电钻长按固定后可用。缓解位用锤子长按解除固定，再收起工具，空手左键取下。";
+        public string GetCustomDescription() => L10n.Get("item.description");
     }
 
 }

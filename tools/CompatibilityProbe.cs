@@ -24,12 +24,34 @@ internal static class CompatibilityProbe
         modPath = args[1];
         AppDomain.CurrentDomain.AssemblyResolve += (_, e) => {
             var name = new AssemblyName(e.Name).Name + ".dll";
-            foreach (var dir in new[] { managed, Path.Combine(managed, "UnityModManager"), Path.GetDirectoryName(modPath) })
+            foreach (var dir in new[] { managed, Path.Combine(managed, "UnityModManager"), Path.GetDirectoryName(modPath), Path.Combine(args[0], "Mods", "DVLangHelper") })
                 if (File.Exists(Path.Combine(dir, name))) return Assembly.LoadFrom(Path.Combine(dir, name));
             return null;
         };
-        try { Run(); Console.WriteLine(assertions + " assertions passed."); return 0; }
+        try { Run(); VerifyTranslations(args[2]); Console.WriteLine(assertions + " assertions passed."); return 0; }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }
+    }
+    private static void VerifyTranslations(string path)
+    {
+        var i2 = Assembly.LoadFrom(Path.Combine(managed, "I2.Localization.dll"));
+        var reader = i2.GetType("I2.Loc.LocalizationReader");
+        var csv = (string)reader.GetMethod("ReadCSVfile").Invoke(null, new object[] { path, System.Text.Encoding.UTF8 });
+        var rows = (System.Collections.Generic.List<string[]>)reader.GetMethod("ReadCSV").Invoke(null, new object[] { csv, ',' });
+        Check(rows.Count == 18, "native CSV reader loads two header rows and 16 terms");
+        Check(rows[0].Length == 27 && rows[0][2] == "English" && rows[0][25] == "Chinese (Simplified)", "DV Language Helper template language columns");
+        Check(rows[1][2] == "en" && rows[1][25] == "zh-CN", "native CSV language codes");
+        Check(rows.Skip(2).Select(r => r[0]).Distinct().Count() == 16, "unique translation keys");
+        foreach (var row in rows.Skip(2))
+        {
+            Check(row.Length == 27 && row[0].StartsWith("dv-caboose-break/"), "namespaced CSV row " + row[0]);
+            Check(row.Skip(2).All(s => !string.IsNullOrWhiteSpace(s)), "complete translations and English fallback " + row[0]);
+            var pattern = @"\{\[\d+\]\}";
+            var en = System.Text.RegularExpressions.Regex.Matches(row[2], pattern).Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value);
+            var zh = System.Text.RegularExpressions.Regex.Matches(row[25], pattern).Cast<System.Text.RegularExpressions.Match>().Select(m => m.Value);
+            Check(en.SequenceEqual(zh), "English/Chinese placeholder parity " + row[0]);
+        }
+        var instructions = rows.Single(r => r[0] == "dv-caboose-break/settings.instructions");
+        Check(instructions[2].Contains("\n") && instructions[25].Contains("\n"), "native CSV preserves quoted multiline instructions");
     }
     private static void Run()
     {
@@ -50,6 +72,41 @@ internal static class CompatibilityProbe
         Check(brakeType.GetMethod("TargetCylinderPressure", flags) != null, "cylinder target patch");
         Check(game.GetType("InventoryItemSpec").GetField("itemPrefabName", flags) != null, "custom item prefab identity field");
         Check(game.GetType("DV.Shops.ShopItemData").GetField("amount", flags) != null, "shop stock field");
+        Check(game.GetType("DV.Shops.GlobalShopController").GetField("scanItemShelfPrefab", flags) != null,
+            "native scanner shelf prefab provides original price-card meshes");
+        var hideTemplateRenderer = mod.GetType("DVCabooseBreak.ShopIntegration").GetMethod("HideTemplateRenderer", flags);
+        Func<bool, bool, bool> hideSample = (text, label) => (bool)hideTemplateRenderer.Invoke(null, new object[] { text, label });
+        Check(!hideSample(true, false), "keep native name and price text");
+        Check(!hideSample(false, true), "keep native price-card backing and barcode meshes");
+        Check(!hideSample(true, true), "keep label text even when its mesh belongs to native label");
+        Check(hideSample(false, false), "hide old merchandise without hiding price label");
+        var shelfType = game.GetType("DV.Shops.ShelfItem");
+        Check(shelfType.GetField("size", flags) != null && shelfType.GetField("height", flags) != null,
+            "native shelf pile footprint fields");
+        Check(game.GetType("DV.Shops.ShelfPlacer").GetMethod("TryPlaceOnAnyShelf", flags) != null,
+            "native shelf placer accepts the whole display pile");
+        var poses = (float[,])mod.GetType("DVCabooseBreak.ShopIntegration").GetField("DisplayPoses", flags).GetValue(null);
+        Check(poses.GetLength(0) == 5 && poses.GetLength(1) == 4, "five shelf handles with position/layer/yaw poses");
+        Check(Enumerable.Range(0, 5).Select(i => poses[i, 3]).Distinct().Count() == 5,
+            "shelf pile has irregular non-repeating angles");
+        Check(Enumerable.Range(1, 4).All(i => poses[i, 1] > poses[i - 1, 1]), "overlapping shelf handles use distinct ascending layers");
+        // DE2 visual bounds in upright AddModel space, transformed with the
+        // same flat-then-yaw order as the display. No Unity scene required.
+        double shelfMinX = double.MaxValue, shelfMaxX = double.MinValue;
+        double shelfMinZ = double.MaxValue, shelfMaxZ = double.MinValue;
+        for (int i = 0; i < 5; i++)
+        for (int corner = 0; corner < 4; corner++)
+        {
+            double x = (corner & 1) == 0 ? -0.0295 : 0.0295;
+            double z = -((corner & 2) == 0 ? -0.053 : 0.184);
+            double angle = poses[i, 3] * Math.PI / 180;
+            double px = poses[i, 0] + x * Math.Cos(angle) + z * Math.Sin(angle);
+            double pz = poses[i, 2] - x * Math.Sin(angle) + z * Math.Cos(angle);
+            shelfMinX = Math.Min(shelfMinX, px); shelfMaxX = Math.Max(shelfMaxX, px);
+            shelfMinZ = Math.Min(shelfMinZ, pz); shelfMaxZ = Math.Max(shelfMaxZ, pz);
+        }
+        Check(shelfMaxZ - shelfMinZ + 0.024 < 0.387, "flat pile including margins fits native shelf depth");
+        Check(shelfMaxX - shelfMinX + 0.024 < 0.30, "display pile keeps a compact shelf width");
         var interaction = Assembly.LoadFrom(Path.Combine(managed, "DV.Interaction.dll"));
         Check(interaction.GetType("DV.Interaction.StaticInteractionArea").GetMethod("Initialize", flags) != null,
             "native fixed interaction area initialization");
@@ -60,9 +117,30 @@ internal static class CompatibilityProbe
         var caboose = mod.GetType("DVCabooseBreak.CabooseBrake");
         var settings = Activator.CreateInstance(mod.GetType("DVCabooseBreak.BrakeSettings"));
         Check(!(bool)settings.GetType().GetField("InvertMouseWheel").GetValue(settings), "mouse-wheel inversion defaults off");
+        Check((float)settings.GetType().GetField("MouseWheelSensitivity").GetValue(settings) == 1f, "wheel sensitivity defaults to original 1x speed");
         var mapScroll = mod.GetType("DVCabooseBreak.CabooseMouseScrollPatch").GetMethod("Map", flags);
         var scrollAction = game.GetType("ScrollAction");
         var scrollSource = game.GetType("ScrollSource");
+        var wheelType = mod.GetType("DVCabooseBreak.WheelStepAccumulator");
+        var consume = wheelType.GetMethod("Consume", flags);
+        Func<object> newWheel = () => Activator.CreateInstance(wheelType, true);
+        Func<object, string, float, int> steps = (wheel, action, sensitivity) =>
+            (int)consume.Invoke(wheel, new object[] { Enum.Parse(scrollAction, action), sensitivity });
+        var slow = newWheel();
+        Check(steps(slow, "ScrollUp", 0.5f) == 0 && steps(slow, "ScrollUp", 0.5f) == 1,
+            "half sensitivity accumulates two ticks into one physical notch");
+        var fast = newWheel();
+        Check(steps(fast, "ScrollUp", 1.5f) == 1 && steps(fast, "ScrollUp", 1.5f) == 2,
+            "fractional increased sensitivity preserves the requested average speed");
+        var precision = newWheel();
+        int total = 0;
+        for (int i = 0; i < 10; i++) total += steps(precision, "ScrollUp", 0.7f);
+        Check(total == 7, "fractional wheel input has no lost step from numerical drift");
+        Check(steps(newWheel(), "ScrollDown", 5f) == -5, "maximum sensitivity works in the release direction");
+        Check(steps(newWheel(), "Release", 5f) == 0, "scroll release never accumulates movement");
+        var changed = newWheel();
+        steps(changed, "ScrollUp", 0.5f);
+        Check(steps(changed, "ScrollUp", 1f) == 1, "changing sensitivity discards stale fractional input");
         Func<string, string, bool, bool, string> mapped = (action, source, own, invert) =>
             mapScroll.Invoke(null, new object[] { Enum.Parse(scrollAction, action), Enum.Parse(scrollSource, source), own, invert }).ToString();
         Check(mapped("ScrollUp", "Mouse", true, true) == "ScrollDown" && mapped("ScrollDown", "Mouse", true, true) == "ScrollUp",
