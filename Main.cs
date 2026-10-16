@@ -19,21 +19,32 @@ namespace DVCabooseBreak
     {
         public const string PrefabId = "dv-caboose-break/BrakeHandle";
         internal const string SaveKey = "dv-caboose-break.v1";
+        internal const string LooseSaveKey = "dv-caboose-break.loose.v1";
         internal static UnityModManager.ModEntry Entry;
+        internal static BrakeSettings Settings = new BrakeSettings();
         internal static GameObject Staging;
         internal static GameObject HandlePrefab;
         internal static float Price = 500f;
         internal static readonly Dictionary<string, float> Installed = new Dictionary<string, float>();
+        internal static readonly HashSet<string> LooseMounts = new HashSet<string>();
         internal static readonly Dictionary<BrakeSystem, CabooseBrake> Brakes = new Dictionary<BrakeSystem, CabooseBrake>();
         private static SaveGameData boundSave;
 
         public static bool Load(UnityModManager.ModEntry entry)
         {
             Entry = entry;
+            Settings = UnityModManager.ModSettings.Load<BrakeSettings>(entry) ?? new BrakeSettings();
             new Harmony(entry.Info.Id).PatchAll();
+            entry.OnSaveGUI = e => Settings.Save(e);
             entry.OnGUI = _ => {
                 GUILayout.Label("守车制动拉杆 / Caboose brake handle — $500");
-                GUILayout.Label("商店扫码结账；手持拉杆瞄准守车阀轴，按 F 安装。\n拖动或滚轮操作小闸；完全缓解后，瞄准拉杆按住左 Ctrl 再按 F 拆卸。");
+                bool invert = GUILayout.Toggle(Settings.InvertMouseWheel, "反转守车制动鼠标滚轮（仅守车小闸）");
+                if (invert != Settings.InvertMouseWheel)
+                {
+                    Settings.InvertMouseWheel = invert;
+                    Settings.Save(entry);
+                }
+                GUILayout.Label("手持拉杆左键预挂；电钻长按固定后才能制动。\n完全缓解后用锤子长按解除固定，再空手左键取下。");
                 GUILayout.Label("需要重启游戏才能卸载。多人游戏尚未验证。");
             };
             entry.Logger.Log("Loaded. Native shop item + caboose independent air brake.");
@@ -59,8 +70,14 @@ namespace DVCabooseBreak
             var manager = Object.FindObjectOfType<SaveGameManager>();
             if (manager == null || manager.data == null || ReferenceEquals(boundSave, manager.data)) return;
             boundSave = manager.data;
-            Installed.Clear();
             var saved = boundSave.GetJObject(SaveKey);
+            ReadMountStates(saved, boundSave.GetJObject(LooseSaveKey));
+        }
+
+        internal static void ReadMountStates(JObject saved, JObject loose)
+        {
+            Installed.Clear();
+            LooseMounts.Clear();
             if (saved != null)
                 foreach (var property in saved.Properties())
                 {
@@ -69,6 +86,13 @@ namespace DVCabooseBreak
                         System.Globalization.CultureInfo.InvariantCulture, out value) && !float.IsNaN(value) && !float.IsInfinity(value))
                         Installed[property.Name] = Mathf.Clamp01(value);
                 }
+            if (loose != null)
+                foreach (var property in loose.Properties())
+                    if (Installed.ContainsKey(property.Name) && property.Value.Type == JTokenType.Boolean && (bool)property.Value)
+                    {
+                        LooseMounts.Add(property.Name);
+                        Installed[property.Name] = 0f;
+                    }
         }
 
         internal static void Save(SaveGameManager manager)
@@ -78,6 +102,30 @@ namespace DVCabooseBreak
             var data = new JObject();
             foreach (var pair in Installed) data[pair.Key] = pair.Value;
             manager.data.SetJObject(SaveKey, data);
+            manager.data.SetJObject(LooseSaveKey, WriteLooseMounts());
+        }
+
+        internal static JObject WriteLooseMounts()
+        {
+            var loose = new JObject();
+            foreach (var guid in LooseMounts) if (Installed.ContainsKey(guid)) loose[guid] = true;
+            return loose;
+        }
+
+        internal static bool SecureMount(string guid)
+        {
+            if (!Installed.ContainsKey(guid) || !LooseMounts.Remove(guid)) return false;
+            Installed[guid] = 0f;
+            return true;
+        }
+
+        internal static bool UnfastenMount(string guid)
+        {
+            float position;
+            if (!Installed.TryGetValue(guid, out position) || LooseMounts.Contains(guid) || position > 0.01f) return false;
+            LooseMounts.Add(guid);
+            Installed[guid] = 0f;
+            return true;
         }
 
         internal static bool IsCaboose(TrainCar car) => car != null && car.carLivery != null && CarTypes.IsCaboose(car.carLivery);
@@ -160,7 +208,7 @@ namespace DVCabooseBreak
         static void Postfix(BrakeSystem __instance, ref float __result)
         {
             CabooseBrake controller;
-            if (Main.Brakes.TryGetValue(__instance, out controller) && controller != null && controller.HasHandle)
+            if (Main.Brakes.TryGetValue(__instance, out controller) && controller != null && controller.IsSecured)
                 __result = Mathf.Max(__result, Mathf.Lerp(1f, 4.5f, controller.Position));
         }
     }

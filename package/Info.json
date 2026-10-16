@@ -2,7 +2,7 @@
   "Id": "dv-caboose-break",
   "DisplayName": "dv-caboose-break",
   "Author": "idk Ma",
-  "Version": "0.1.2",
+  "Version": "0.1.5",
   "ManagerVersion": "0.27.0",
   "AssemblyName": "DVCabooseBreak.dll",
   "EntryMethod": "DVCabooseBreak.Main.Load",

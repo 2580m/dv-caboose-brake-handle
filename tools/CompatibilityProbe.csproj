@@ -4,6 +4,8 @@
     <TargetFramework>net9.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GameDir Condition="'$(GameDir)' == ''">W:\SteamLibrary\steamapps\common\Derail Valley</GameDir>
   </PropertyGroup>
   <ItemGroup><Compile Include="CompatibilityProbe.cs" /></ItemGroup>
+  <ItemGroup><Reference Include="Newtonsoft.Json"><HintPath>$(GameDir)\DerailValley_Data\Managed\Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference></ItemGroup>
 </Project>

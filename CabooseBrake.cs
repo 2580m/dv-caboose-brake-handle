@@ -1,9 +1,12 @@
 using System.Collections;
 using System.Linq;
+using DV;
 using DV.CabControls;
 using DV.CabControls.Spec;
+using DV.Customization.Gadgets;
 using DV.InventorySystem;
 using DV.Interaction;
+using DV.Interaction.Inputs;
 using DV.Shops;
 using UnityEngine;
 
@@ -23,8 +26,12 @@ namespace DVCabooseBreak
         private GameObject handle;
         private GameObject interactionArea;
         private string guid;
+        private int mountChangedFrame;
         public bool HasHandle => !string.IsNullOrEmpty(guid) && Main.Installed.ContainsKey(guid);
-        public float Position => HasHandle ? Main.Installed[guid] : 0f;
+        public bool IsSecured => HasHandle && !Main.LooseMounts.Contains(guid);
+        public float Position => IsSecured ? Main.Installed[guid] : 0f;
+        internal Vector3 ToolPosition => car.interior.TransformPoint(Spindle);
+        internal Quaternion ToolRotation => car.interior.rotation * Quaternion.Euler(0, 180f, 0);
 
         internal void Initialize(TrainCar train)
         {
@@ -49,6 +56,7 @@ namespace DVCabooseBreak
             if (car == null || !car.IsInteriorLoaded || !HasHandle || handle != null) return;
             handle = new GameObject("Caboose independent brake");
             handle.transform.SetParent(Main.Stage.transform, false);
+            handle.AddComponent<CabooseBrakeScrollScope>();
             handle.transform.localPosition = Spindle;
             var model = HandleFactory.AddModel(handle.transform);
             // Seen from the cabin, the valve faces local +Z. A positive angle
@@ -102,11 +110,12 @@ namespace DVCabooseBreak
             if (lever == null || !HasHandle) yield break;
             lever.SetValue(Position);
             lever.ValueChanged += Changed;
+            RefreshMountState();
         }
 
         private void Changed(ValueChangedEventArgs args)
         {
-            if (!HasHandle) return;
+            if (!IsSecured) return;
             Main.Installed[guid] = Mathf.Clamp01(args.newValue);
             car.brakeSystem.independentBrakePosition = Position;
         }
@@ -117,36 +126,83 @@ namespace DVCabooseBreak
             foreach (var tr in go.GetComponentsInChildren<Transform>(true)) tr.gameObject.layer = layer;
         }
 
-        internal bool Install()
+        internal bool PlaceLoosely()
         {
             if (HasHandle || car == null || string.IsNullOrEmpty(guid) || !car.IsInteriorLoaded) return false;
             Main.Installed.Add(guid, 0f);
+            Main.LooseMounts.Add(guid);
+            mountChangedFrame = Time.frameCount;
             EnsureVisual();
             if (lever == null)
             {
                 Main.Installed.Remove(guid);
+                Main.LooseMounts.Remove(guid);
                 return false;
             }
-            Main.Entry.Logger.Log("Installed handle on " + guid);
+            Main.Entry.Logger.Log("Loosely placed handle on " + guid);
             return true;
+        }
+
+        internal bool Secure()
+        {
+            if (!HasHandle || !Main.SecureMount(guid)) return false;
+            RefreshMountState();
+            return true;
+        }
+
+        internal bool Unfasten()
+        {
+            if (!HasHandle || !Main.UnfastenMount(guid)) return false;
+            RefreshMountState();
+            return true;
+        }
+
+        private void RefreshMountState()
+        {
+            if (lever == null || lever.GetComponent<HingeJoint>() == null) return;
+            lever.ForceEndInteraction();
+            lever.BlockControl(!IsSecured);
+            lever.InteractionAllowed = IsSecured;
+            var body = lever.GetComponent<Rigidbody>();
+            if (body != null) body.isKinematic = !IsSecured;
+            if (interactionArea != null) interactionArea.SetActive(IsSecured);
         }
 
         private void Update()
         {
             if (car == null) return;
             if (HasHandle) car.brakeSystem.independentBrakePosition = Position;
-            if (!HasHandle || Position > 0.01f || !Input.GetKey(KeyCode.LeftControl) || !Input.GetKeyDown(KeyCode.F) || AimedSocket() != this) return;
+            if (HasHandle && !IsSecured && Time.frameCount > mountChangedFrame && !VRManager.IsVREnabled() && Time.timeScale > 0 &&
+                Cursor.lockState == CursorLockMode.Locked &&
+                Inventory.Instance.GetEquippedItemAtSlot(0) == null && Inventory.Instance.GetEquippedItemAtSlot(1) == null &&
+                InputManager.NewPlayer.GetButtonDown(InputManager.Actions.InteractionPrimary) && AimedSocket() == this)
+                TakeDown();
+        }
+
+        internal bool TakeDown()
+        {
+            if (!HasHandle || IsSecured || car == null || !car.IsInteriorLoaded) return false;
             // Spawn before removing state; failed creation never loses a handle.
             var loose = Instantiate(HandleFactory.GetPrefab(), car.interior.TransformPoint(Spindle + new Vector3(0, 0, 0.25f)), car.interior.rotation);
             loose.GetComponent<InventoryItemSpec>().BelongsToPlayer = true;
             loose.GetComponent<ShopRestocker>().restockOnItemDestroyed = true;
             StorageController.Instance.AddItemToWorldStorage(loose.GetComponent<ItemBase>());
             Main.Installed.Remove(guid);
+            Main.LooseMounts.Remove(guid);
             car.brakeSystem.independentBrakePosition = 0f;
             if (lever != null) lever.ForceEndInteraction();
             if (interactionArea != null) Destroy(interactionArea);
             if (handle != null) Destroy(handle);
             lever = null;
+            // Same pickup request used by the native GadgetHandNonVR after a
+            // removable shop gadget is clicked: actually hold it, not just add
+            // an inventory slot reservation.
+            var hand = Object.FindObjectOfType<GadgetHandNonVR>();
+            var grabHandler = loose.GetComponent<AGrabHandler>();
+            if (hand != null && hand.grabber != null && grabHandler != null)
+                hand.grabber.InteractionHandler.RequestForceHold(grabHandler);
+            else Inventory.Instance.EquipItem(loose, 0);
+            return true;
         }
 
         internal static CabooseBrake AimedSocket()
@@ -165,15 +221,6 @@ namespace DVCabooseBreak
             // Prevent installing through a wall; allow the valve's own collider.
             RaycastHit hit;
             return !Physics.Raycast(ray, out hit, Mathf.Max(0, distance - 0.12f), Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
-        }
-
-        private void OnGUI()
-        {
-            if (AimedSocket() != this) return;
-            var text = HasHandle
-                ? $"守车小闸 {Position:P0}  |  制动缸 {Mathf.Max(0, car.brakeSystem.brakeCylinderPressure - 1):F1} bar\n拖动 / 滚轮；缓解后 Ctrl+F 拆卸"
-                : "守车制动阀：手持购买的制动拉杆，按 F 安装";
-            GUI.Box(new Rect(Screen.width / 2f - 235, Screen.height / 2f + 45, 470, 55), text);
         }
 
         private void OnDestroy()

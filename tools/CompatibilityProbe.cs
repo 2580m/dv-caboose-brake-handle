@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
+using Newtonsoft.Json.Linq;
 
 // Runs against the installed game's assemblies, without starting Unity or
 // constructing native Unity objects. Exercises the real pneumatic math.
@@ -57,6 +58,59 @@ internal static class CompatibilityProbe
         foreach (var field in new[] { "nonVrStaticInteractionArea", "notch", "drag", "limitHit" })
             Check(leverSpec.GetField(field, flags) != null, "native lever area/audio field " + field);
         var caboose = mod.GetType("DVCabooseBreak.CabooseBrake");
+        var settings = Activator.CreateInstance(mod.GetType("DVCabooseBreak.BrakeSettings"));
+        Check(!(bool)settings.GetType().GetField("InvertMouseWheel").GetValue(settings), "mouse-wheel inversion defaults off");
+        var mapScroll = mod.GetType("DVCabooseBreak.CabooseMouseScrollPatch").GetMethod("Map", flags);
+        var scrollAction = game.GetType("ScrollAction");
+        var scrollSource = game.GetType("ScrollSource");
+        Func<string, string, bool, bool, string> mapped = (action, source, own, invert) =>
+            mapScroll.Invoke(null, new object[] { Enum.Parse(scrollAction, action), Enum.Parse(scrollSource, source), own, invert }).ToString();
+        Check(mapped("ScrollUp", "Mouse", true, true) == "ScrollDown" && mapped("ScrollDown", "Mouse", true, true) == "ScrollUp",
+            "enabled option reverses caboose mouse up/down");
+        Check(mapped("ScrollUp", "Mouse", true, false) == "ScrollUp", "disabled option preserves normal caboose wheel direction");
+        Check(mapped("ScrollUp", "Mouse", false, true) == "ScrollUp", "locomotive and other levers remain unaffected");
+        Check(mapped("ScrollUp", "HUD", true, true) == "ScrollUp", "HUD input remains unaffected");
+        Check(mapped("Release", "Mouse", true, true) == "Release" && mapped("ScrollLeft", "Mouse", true, true) == "ScrollLeft",
+            "release and horizontal inputs remain unaffected");
+        Check(caboose.GetMethod("OnGUI", flags) == null, "custom valve hover UI removed");
+        var mainType = mod.GetType("DVCabooseBreak.Main");
+        var readMounts = mainType.GetMethod("ReadMountStates", flags);
+        var writeLoose = mainType.GetMethod("WriteLooseMounts", flags);
+        var instance = System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(caboose);
+        caboose.GetField("guid", flags).SetValue(instance, "probe-car");
+        Func<bool> hasHandle = () => (bool)caboose.GetProperty("HasHandle", flags).GetValue(instance);
+        Func<bool> secured = () => (bool)caboose.GetProperty("IsSecured", flags).GetValue(instance);
+        Func<float> position = () => (float)caboose.GetProperty("Position", flags).GetValue(instance);
+        var positions = (System.Collections.IDictionary)mainType.GetField("Installed", flags).GetValue(null);
+        readMounts.Invoke(null, new object[] { JObject.Parse("{'probe-car':0.7}"), JObject.Parse("{'probe-car':true}") });
+        Check(hasHandle() && !secured() && position() == 0f, "loose mount restores visually present but cannot brake");
+        var secureMount = mainType.GetMethod("SecureMount", flags);
+        var unfastenMount = mainType.GetMethod("UnfastenMount", flags);
+        Check((bool)secureMount.Invoke(null, new object[] { "probe-car" }) && secured(), "drilling secures the pre-hung handle");
+        Check(!(bool)secureMount.Invoke(null, new object[] { "probe-car" }), "cannot secure an already secured handle twice");
+        positions["probe-car"] = 0.5f;
+        Check(!(bool)unfastenMount.Invoke(null, new object[] { "probe-car" }) && secured(), "hammer cannot unfasten an applied brake");
+        positions["probe-car"] = 0f;
+        Check((bool)unfastenMount.Invoke(null, new object[] { "probe-car" }) && hasHandle() && !secured(),
+            "hammer only loosens the handle and leaves it visually mounted");
+        var looseSaved = (JObject)writeLoose.Invoke(null, null);
+        readMounts.Invoke(null, new object[] { JObject.Parse("{'probe-car':0}"), looseSaved });
+        Check(hasHandle() && !secured(), "loosened state survives a save round trip");
+        readMounts.Invoke(null, new object[] { JObject.Parse("{'probe-car':0.4}"), null });
+        Check(secured() && Math.Abs(position() - 0.4f) < 0.001f, "older saves migrate existing handles as secured");
+        readMounts.Invoke(null, new object[] { null, JObject.Parse("{'probe-car':true}") });
+        Check(!hasHandle() && !secured(), "orphan loose-state entries cannot mint a handle");
+        var interactor = game.GetType("DV.Customization.Gadgets.GadgetInteractor");
+        Check(interactor.GetMethod("Update", flags).GetMethodBody() != null, "native tool query patch target");
+        foreach (var name in new[] { "use", "vrInteractionPoint" })
+            Check(interactor.GetField(name, flags) != null, "native tool bridge field " + name);
+        var drillType = game.GetType("DV.Customization.Gadgets.DrillTool");
+        foreach (var name in new[] { "TargetIsValid", "ProcessingProgress" })
+            Check(drillType.GetProperty(name, flags).GetSetMethod(true) != null, "original drill effects input " + name);
+        Check(game.GetType("DV.Customization.Gadgets.GadgetRemover").GetField("soundOnGadgetRemoved", flags) != null,
+            "original hammer removal sound");
+        Check(game.GetType("DV.Items.ItemWorkingAnimation").GetEvent("WorkStopped", flags) != null,
+            "native tool completion/cancellation event");
         var spindle = caboose.GetField("Spindle", flags).GetValue(null);
         float mountingZ = (float)spindle.GetType().GetField("z").GetValue(spindle);
         // Original mesh measurements (metres), independently read with UnityPy.

@@ -59,16 +59,7 @@ namespace DVCabooseBreak
             spec.IsEssential = false;
             spec.PreviewPrefab = model;
             spec.PreviewBounds = new Bounds(new Vector3(0, 0.0655f, 0.0145f), new Vector3(0.059f, 0.237f, 0.033f));
-            // The icon is made locally; no redistributed game assets or asset bundle.
-            var texture = new Texture2D(64, 64, TextureFormat.RGBA32, false);
-            var pixels = new Color[4096];
-            for (int y = 0; y < 64; y++)
-                for (int x = 0; x < 64; x++)
-                    pixels[y * 64 + x] = x >= 27 && x <= 37 && y >= 8 && y <= 57
-                        ? (y < 29 ? new Color(0.16f, 0.17f, 0.18f) : new Color(0.62f, 0.48f, 0.32f)) : Color.clear;
-            texture.SetPixels(pixels);
-            texture.Apply();
-            var icon = Sprite.Create(texture, new Rect(0, 0, 64, 64), new Vector2(0.5f, 0.5f));
+            var icon = HandleIconRenderer.Render();
             spec.ItemIconSprite = spec.ItemIconSpriteSimple = spec.ItemIconSpriteDropped = icon;
             root.AddComponent<HandleDescription>();
             root.AddComponent<ItemSaveData>();
@@ -79,7 +70,7 @@ namespace DVCabooseBreak
             item.allowedSnapPointTypes = 0;
             item.itemType = ItemType.SmallItem;
             root.AddComponent<ShopRestocker>();
-            root.AddComponent<LooseHandle>();
+            root.AddComponent<LooseHandlePlacement>();
             Main.HandlePrefab = root;
             return root;
         }
@@ -142,39 +133,7 @@ namespace DVCabooseBreak
     {
         private void Awake() => GetComponent<InventoryItemSpec>().NameOverride = "守车制动拉杆 / Caboose brake handle";
         public string GetNameParam() => "";
-        public string GetCustomDescription() => "安装在守车压力表旁缺少拉杆的制动阀轴上。手持瞄准阀轴，按 F 或使用键安装。拖动/滚轮控制本车空气制动，需要副风缸有气。完全缓解后 Ctrl+F 可拆卸。";
+        public string GetCustomDescription() => "手持拉杆对准空阀轴左键预挂，预挂时不可制动；电钻长按固定后可用。缓解位用锤子长按解除固定，再收起工具，空手左键取下。";
     }
 
-    public sealed class LooseHandle : MonoBehaviour
-    {
-        private ItemBase item;
-        private bool installing;
-        private void Start()
-        {
-            item = GetComponent<ItemBase>();
-            if (item != null) item.Used += Install;
-        }
-        private void Update()
-        {
-            if (item != null && item.IsGrabbed() && Input.GetKeyDown(KeyCode.F)) Install();
-        }
-        private void Install()
-        {
-            if (installing || item == null || !item.IsGrabbed() || !item.InventorySpecs.BelongsToPlayer) return;
-            var target = CabooseBrake.AimedSocket();
-            if (target == null || target.HasHandle) return;
-            if (!target.Install()) return;
-            installing = true;
-            var restocker = GetComponent<ShopRestocker>();
-            if (restocker != null) restocker.restockOnItemDestroyed = false;
-            item.ForceEndInteraction();
-            Inventory.Instance.PurgeFromInventory(gameObject);
-            StorageController.Instance.RemoveItemFromStorageItemList(item);
-            Object.Destroy(gameObject);
-        }
-        private void OnDestroy()
-        {
-            if (item != null) item.Used -= Install;
-        }
-    }
 }

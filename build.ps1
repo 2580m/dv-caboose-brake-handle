@@ -12,7 +12,7 @@ if (!(Test-Path -LiteralPath (Join-Path $GameDir 'DerailValley_Data\Managed\Unit
 }
 dotnet build (Join-Path $projectDir 'dv-caboose-break.csproj') -c Release "-p:GameDir=$GameDir" --ignore-failed-sources -v minimal
 if ($LASTEXITCODE -ne 0) { throw 'Mod build failed.' }
-dotnet build (Join-Path $projectDir 'tools\CompatibilityProbe.csproj') -c Release --ignore-failed-sources -v minimal
+dotnet build (Join-Path $projectDir 'tools\CompatibilityProbe.csproj') -c Release "-p:GameDir=$GameDir" --ignore-failed-sources -v minimal
 if ($LASTEXITCODE -ne 0) { throw 'Probe build failed.' }
 $assembly = Join-Path $projectDir 'bin\Release\net48\DVCabooseBreak.dll'
 dotnet (Join-Path $projectDir 'tools\bin\Release\net9.0\CompatibilityProbe.dll') $GameDir $assembly
